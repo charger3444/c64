@@ -68,11 +68,13 @@ header plus a tiny `10 SYS 2061` BASIC line auto-start it.
 - The **player** is a 12×21 multicolor hardware sprite (yellow body,
   orange cap, dark outline) with separate left/right/jump frames and
   a 2-frame run cycle.
-- The **main loop is a raster IRQ** at the bottom border (line 250)
-  that runs the whole simulate+render step once per frame; CIA1's
-  own IRQ sources are disabled so the VIC raster is the sole
-  interrupt source, and the RESTORE-key/RS232 NMI vector is pointed
-  at a no-op stub since the game doesn't use either.
+- The **main loop busy-waits on the raw VIC-II raster register**
+  ($D012) to pace itself at one simulate+render step per frame. This
+  game never enables CPU interrupts at all (`SEI` for the whole run):
+  no KERNAL IRQ/NMI machinery is touched or relied upon, so there's
+  zero risk of interfering with (or being interfered with by)
+  whatever KERNAL happens to be loaded. $D012 is bare VIC-II
+  hardware, unaffected by which ROM is in use.
 - Flags animate by swapping the pennant's screen character between
   two pre-drawn frames every 20 frames — cheap and very C64.
 - SID sound effects use one-shot envelopes with `sustain=0` so a
@@ -85,21 +87,16 @@ Genuine Commodore KERNAL/BASIC/character ROMs are Cloanto-licensed
 and can't be redistributed or fetched here, so in this sandboxed
 environment the build was exercised under VICE using the
 [MEGA65 Open ROMs](https://github.com/MEGA65/open-roms) project — an
-explicitly **work-in-progress**, clean-room replacement KERNAL. Init
-(hardware setup, character-ROM copy/patch, sprite pointer
-computation) and the raster-IRQ install/chain were all verified
-correct via monitor-level breakpoint tracing. However, that
-replacement KERNAL's idle loop is not reentrancy-safe against a
-custom `$0314` raster-IRQ takeover — the *single most standard*
-technique in C64 programming — and crashes intermittently (anywhere
-from under a second to 30+ seconds of idle time) regardless of IRQ
-strategy (chained vs. fully independent), which CIA1 state is used,
-or which Open ROMs build is loaded. A KERNAL-independent, jiffy-clock
-polling build of the same game logic ran cleanly for 30+ seconds,
-confirming the game code itself is not at fault. On a real C64 (or
-any emulator configured with genuine ROMs) this is a non-issue, since
-IRQ vector takeover is exactly what real KERNAL implementations are
-built to support cleanly.
+explicitly **work-in-progress**, clean-room replacement KERNAL. An
+earlier version of this port installed a custom raster-IRQ vector
+(the standard C64 technique) and hit a reentrancy bug in that
+replacement KERNAL's idle loop, causing intermittent crashes back to
+`READY.`. Rather than depend on any KERNAL/IRQ behaviour at all, the
+main loop was rewritten to busy-wait on the bare `$D012` VIC-II
+raster register with interrupts left permanently disabled — this
+touches no KERNAL state whatsoever, and has run cleanly for extended
+periods (confirmed via memory/register inspection: correct VIC
+colours, correct screen contents, no crashes) in the same test setup.
 
 ## Scope
 

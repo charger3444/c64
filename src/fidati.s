@@ -2,7 +2,9 @@
 ; FIDATI. -- Commodore 64 port (Blocco 1: SPAZIO GEOMETRICO, liv. 1-3)
 ; Original game design & HTML5 source: Carlo Gerla
 ; C64 port: physics, hazards and sprite look ported natively to the
-; VIC-II / SID, raster-IRQ driven, joystick-only control.
+; VIC-II / SID. The main loop busy-waits on the raw $D012 raster
+; register (no IRQs/KERNAL dependency at all -- see README), and
+; input is joystick-only (control port 2).
 ;
 ; Build: cl65 -t none -C c64-fidati.cfg -o fidati.prg fidati.s
 ; ====================================================================
@@ -21,8 +23,6 @@ VIC_CTRL2   = $D016
 VIC_SPR_XP  = $D01D
 VIC_SPR_YP  = $D017
 VIC_MEMPTR  = $D018
-VIC_IRQFLAG = $D019
-VIC_IRQEN   = $D01A
 VIC_SPR_PRI = $D01B
 VIC_SPR_MC  = $D01C
 VIC_SPR_MSX = $D010
@@ -50,9 +50,6 @@ CIA2_PRA    = $DD00
 
 SCREEN      = $0400
 COLORRAM    = $D800
-
-IRQVEC      = $0314
-NMIVEC      = $0318
 
 ; --------------------------------------------------------------------
 ; game constants
@@ -143,7 +140,6 @@ CAUSE_XFLAG = 2
 .segment "ZEROPAGE"
 
 tick:           .res 1
-irq_stage:      .res 1
 
 game_state:     .res 1
 state_timer:    .res 1
@@ -184,7 +180,6 @@ rng:         .res 1
 
 blocknum_r0: .res 1
 sprframe:    .res 1
-old_irq:     .res 2
 
 ; scratch
 t0: .res 1
@@ -272,19 +267,37 @@ basicstart:
 .segment "CODE"
 
 reset:
-    sei
-    ldx #$FF
-    txs
-    lda #$37              ; known-good memory config: BASIC+KERNAL+IO
-    sta $01
+    sei                    ; interrupts stay OFF for good: we don't
+    ldx #$FF               ; need the KERNAL's IRQ/NMI machinery at
+    txs                    ; all, so we never touch it and can't be
+    lda #$37               ; hurt by a replacement ROM's idle-loop
+    sta $01                ; being interrupted at the wrong moment.
     jsr init_hardware
     jsr copy_romfont
     jsr patch_charset
     jsr init_vars
-    jsr install_irq
-    cli
+    POKE VIC_RASTER, TICK_LINE
+
+; ====================================================================
+; main loop: busy-wait on the physical raster position (a bare VIC-II
+; hardware register, unaffected by whichever KERNAL is loaded) so we
+; run game_frame exactly once per frame, with zero dependency on
+; interrupts, CIA timers, or any KERNAL-provided clock.
+; ====================================================================
 forever:
+@wait_low:
+    lda VIC_RASTER
+    cmp #TICK_LINE
+    bcs @wait_low
+@wait_high:
+    lda VIC_RASTER
+    cmp #TICK_LINE
+    bcc @wait_high
+    jsr game_frame
+    inc tick
     jmp forever
+
+TICK_LINE = 250        ; bottom border raster line used as our "vsync"
 
 ; --------------------------------------------------------------------
 init_hardware:
@@ -311,10 +324,12 @@ init_hardware:
     POKE VIC_SPRMC2, 8                ; cap -> orange
     POKE VIC_SPR0COL, 7               ; body -> yellow
 
-    ; disable CIA1 IRQ sources so the VIC raster IRQ is the only one
+    ; belt & suspenders: disable CIA1 IRQ sources (we never enable
+    ; the CPU interrupt flag anyway, but this also stops any pending
+    ; CIA1 IRQ from lingering) and clear any pending flags.
     lda #$7F
     sta CIA1_ICR
-    lda CIA1_ICR          ; reading clears any pending flags
+    lda CIA1_ICR
 
     ; freeze the keyboard column driver so joystick port 2 reads clean
     lda #$FF
@@ -440,7 +455,6 @@ clear_screen:
 init_vars:
     lda #0
     sta tick
-    sta irq_stage
     sta score_lo
     sta score_hi
     sta deaths_tot
@@ -452,58 +466,6 @@ init_vars:
     lda #1
     sta state_timer     ; force first-frame redraw of title screen
     rts
-
-; --------------------------------------------------------------------
-install_irq:
-    sei
-    lda IRQVEC
-    sta old_irq
-    lda IRQVEC+1
-    sta old_irq+1
-    SETW IRQVEC, irq_handler
-    SETW NMIVEC, nmi_stub   ; neutralise RESTORE-key/RS232 NMI: we
-                            ; don't use either, just bounce straight
-                            ; back out to be safe.
-    POKE VIC_RASTER, 250
-    lda VIC_CTRL1
-    and #$7F
-    sta VIC_CTRL1
-    lda #$7F
-    sta VIC_IRQEN          ; disable all VIC IRQ sources first
-    lda #$FF
-    sta VIC_IRQFLAG        ; ack/clear any stale pending flags
-    POKE VIC_IRQEN, 1      ; enable raster IRQ only
-    cli
-    rts
-
-; ====================================================================
-; IRQ handler -- single raster stage per frame (line 250, bottom
-; border): runs the whole game logic/render step, then re-arms.
-; ====================================================================
-irq_handler:
-    pha
-    txa
-    pha
-    tya
-    pha
-
-    jsr game_frame
-    inc tick
-
-    lda #$FF
-    sta VIC_IRQFLAG
-
-    pla
-    tay
-    pla
-    tax
-    pla
-    rti
-
-; RESTORE-key/RS232 NMI stub: this game uses neither, so just bail
-; out immediately rather than trust the (untested) replacement KERNAL.
-nmi_stub:
-    rti
 
 ; ====================================================================
 ; per-frame dispatcher
