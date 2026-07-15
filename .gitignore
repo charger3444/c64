@@ -1,0 +1,6 @@
+*.o
+*.dbg
+*.lst
+*.map
+__pycache__/
+*.pyc
