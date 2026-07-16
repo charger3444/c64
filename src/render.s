@@ -538,7 +538,7 @@ draw_title_screen:
     sta printrow
     lda #7
     sta printcol
-    lda #14
+    lda #3
     sta printcolor
     SETW msgptr, txt_subtitle
     jsr print_pascal
@@ -572,7 +572,7 @@ draw_title_screen:
     sta printrow
     lda #8
     sta printcol
-    lda #12
+    lda #1
     sta printcolor
     SETW msgptr, txt_credit
     jsr print_pascal
@@ -688,7 +688,7 @@ draw_levelout_overlay:
     sta printrow
     lda #12
     sta printcol
-    lda #12
+    lda #1
     sta printcolor
     SETW msgptr, txt_notrust
     jsr print_pascal
@@ -745,7 +745,7 @@ draw_blockdone_screen:
     sta printrow
     lda #7
     sta printcol
-    lda #14
+    lda #3
     sta printcolor
     SETW msgptr, txt_restart
     jsr print_pascal
